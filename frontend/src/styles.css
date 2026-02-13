@@ -38,6 +38,48 @@ body,
   display: block;
 }
 
+.node-tooltip {
+  position: absolute;
+  left: 0;
+  top: 0;
+  max-width: 260px;
+  padding: 7px 9px;
+  border: 1px solid rgba(111, 255, 178, 0.36);
+  border-radius: 8px;
+  background: rgba(5, 24, 14, 0.9);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 80ms ease;
+  z-index: 1;
+}
+
+.node-tooltip.visible {
+  opacity: 1;
+}
+
+.node-tooltip-title {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-main);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.node-tooltip-meta {
+  margin: 4px 0 0;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.node-tooltip-pair {
+  margin: 4px 0 0;
+  font-size: 10px;
+  color: #b7ffd8;
+}
+
 #hud-root {
   position: absolute;
   left: 0;
@@ -300,6 +342,13 @@ body,
   padding: 7px;
   margin-bottom: 7px;
   background: rgba(9, 31, 19, 0.45);
+}
+
+.network-row.is-selected {
+  border-color: color-mix(in srgb, var(--cluster-color) 78%, #d8ffe8 22%);
+  background: color-mix(in srgb, rgba(9, 31, 19, 0.45) 58%, var(--cluster-color) 42%);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--cluster-color) 60%, transparent),
+    0 0 18px color-mix(in srgb, var(--cluster-color) 35%, transparent);
 }
 
 .network-main {

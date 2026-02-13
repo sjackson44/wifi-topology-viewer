@@ -3,12 +3,26 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
+import {
+  estimateDistanceMetersFromRssi,
+  estimatePairDistanceRangeMeters,
+  formatDistanceMeters,
+  formatDistanceRangeMeters,
+} from './distance.js';
 
 const MAX_RENDER_NODES = 120;
 const MAX_RENDER_EDGES = 160;
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function truncateLabel(text, maxLength = 18) {
+  const source = String(text || '');
+  if (source.length <= maxLength) {
+    return source;
+  }
+  return `${source.slice(0, maxLength - 1)}…`;
 }
 
 function createGlowTexture() {
@@ -66,19 +80,37 @@ function createSpritePool(scene, glowTexture) {
     sprite.scale.setScalar(0.1);
     scene.add(sprite);
 
-    pool.push({
+    const node = {
       id: null,
       sprite,
       material,
       lastSeenFrame: -1,
-    });
+      ap: null,
+    };
+
+    sprite.userData.node = node;
+    pool.push(node);
   }
 
   return pool;
 }
 
-export function createWifiScene(container) {
+export function createWifiScene(container, handlers = {}) {
   const getClusterColor = createClusterColorGetter();
+
+  const tooltipEl = document.createElement('div');
+  tooltipEl.className = 'node-tooltip';
+  const tooltipTitleEl = document.createElement('p');
+  tooltipTitleEl.className = 'node-tooltip-title';
+  const tooltipMetaEl = document.createElement('p');
+  tooltipMetaEl.className = 'node-tooltip-meta';
+  const tooltipPairEl = document.createElement('p');
+  tooltipPairEl.className = 'node-tooltip-pair';
+  tooltipPairEl.hidden = true;
+  tooltipEl.appendChild(tooltipTitleEl);
+  tooltipEl.appendChild(tooltipMetaEl);
+  tooltipEl.appendChild(tooltipPairEl);
+  container.appendChild(tooltipEl);
 
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -169,6 +201,7 @@ export function createWifiScene(container) {
     blending: THREE.AdditiveBlending,
     depthWrite: false,
     depthTest: false,
+    side: THREE.DoubleSide,
     vertexColors: true,
   });
   const coverageMesh = new THREE.InstancedMesh(coverageGeometry, coverageMaterial, MAX_RENDER_NODES);
@@ -197,6 +230,12 @@ export function createWifiScene(container) {
   const tempMatrix = new THREE.Matrix4();
   const identityQuaternion = new THREE.Quaternion();
   const tempColor = new THREE.Color();
+  const whiteColor = new THREE.Color(0xffffff);
+  const raycaster = new THREE.Raycaster();
+  const pointerNdc = new THREE.Vector2(2, 2);
+
+  let hoveredNode = null;
+  let selectedBssid = null;
 
   let frameId = 0;
 
@@ -211,6 +250,7 @@ export function createWifiScene(container) {
     }
 
     node.id = id;
+    node.ap = null;
     node.sprite.visible = true;
     node.material.opacity = 0.9;
     activePoolById.set(id, node);
@@ -225,12 +265,146 @@ export function createWifiScene(container) {
 
     activePoolById.delete(id);
     node.id = null;
+    node.ap = null;
     node.lastSeenFrame = -1;
     node.sprite.visible = false;
     node.sprite.scale.setScalar(0.1);
     node.material.opacity = 0;
     freePool.push(node);
   }
+
+  function setSelectedBssid(nextBssid, emit = true) {
+    const normalized = nextBssid || null;
+    if (selectedBssid === normalized) {
+      return;
+    }
+
+    selectedBssid = normalized;
+    if (emit) {
+      handlers.onSelect?.(selectedBssid);
+    }
+  }
+
+  function hideTooltip() {
+    hoveredNode = null;
+    tooltipEl.classList.remove('visible');
+  }
+
+  function showTooltip(ap, clientX, clientY) {
+    if (!ap) {
+      hideTooltip();
+      return;
+    }
+
+    const ssid = ap.ssid || '<hidden>';
+    const rssi = ap.rssiEstimated ? `~${ap.rssi}` : `${ap.rssi}`;
+    const channel = ap.channel || '?';
+    const band = ap.band || 'unknown';
+    const distance = estimateDistanceMetersFromRssi(ap.rssi);
+
+    tooltipTitleEl.textContent = ssid;
+    tooltipMetaEl.textContent = `${rssi} dBm • ch ${channel} • ${band} • ${formatDistanceMeters(distance)}`;
+    tooltipPairEl.hidden = true;
+
+    if (selectedBssid && ap.bssid !== selectedBssid) {
+      const selectedAp = activePoolById.get(selectedBssid)?.ap;
+      const selectedDistance = estimateDistanceMetersFromRssi(selectedAp?.rssi);
+      const pairRange = estimatePairDistanceRangeMeters(selectedDistance, distance);
+      if (selectedAp && pairRange) {
+        const selectedName = truncateLabel(selectedAp.ssid || '<hidden>');
+        tooltipPairEl.textContent = `Pair estimate with ${selectedName}: ${formatDistanceRangeMeters(pairRange)}`;
+        tooltipPairEl.hidden = false;
+      }
+    }
+
+    tooltipEl.classList.add('visible');
+
+    const rect = renderer.domElement.getBoundingClientRect();
+    const localX = clientX - rect.left;
+    const localY = clientY - rect.top;
+    const tooltipWidth = tooltipEl.offsetWidth || 220;
+    const tooltipHeight = tooltipEl.offsetHeight || 54;
+    const maxLeft = Math.max(8, rect.width - tooltipWidth - 8);
+    const maxTop = Math.max(8, rect.height - tooltipHeight - 8);
+    const left = clamp(localX + 14, 8, maxLeft);
+    const top = clamp(localY + 14, 8, maxTop);
+
+    tooltipEl.style.left = `${left}px`;
+    tooltipEl.style.top = `${top}px`;
+  }
+
+  function pickHoveredNode(clientX, clientY) {
+    const rect = renderer.domElement.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) {
+      return null;
+    }
+
+    pointerNdc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+    pointerNdc.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+    raycaster.setFromCamera(pointerNdc, camera);
+
+    const activeSprites = [];
+    for (const node of activePoolById.values()) {
+      if (node.sprite.visible) {
+        activeSprites.push(node.sprite);
+      }
+    }
+
+    if (!activeSprites.length) {
+      return null;
+    }
+
+    const intersections = raycaster.intersectObjects(activeSprites, false);
+    if (!intersections.length) {
+      return null;
+    }
+
+    return intersections[0].object.userData.node || null;
+  }
+
+  function onPointerMove(event) {
+    if (event.buttons > 0) {
+      hideTooltip();
+      return;
+    }
+
+    const node = pickHoveredNode(event.clientX, event.clientY);
+    if (!node || !node.ap) {
+      hideTooltip();
+      return;
+    }
+
+    hoveredNode = node;
+    showTooltip(node.ap, event.clientX, event.clientY);
+  }
+
+  function onPointerLeave() {
+    hideTooltip();
+  }
+
+  function onClick(event) {
+    const node = pickHoveredNode(event.clientX, event.clientY);
+    if (!node || !node.ap) {
+      setSelectedBssid(null);
+      hideTooltip();
+      return;
+    }
+
+    const nextSelected = selectedBssid === node.id ? null : node.id;
+    setSelectedBssid(nextSelected);
+
+    if (!nextSelected) {
+      hideTooltip();
+      return;
+    }
+
+    hoveredNode = node;
+    showTooltip(node.ap, event.clientX, event.clientY);
+  }
+
+  renderer.domElement.addEventListener('pointermove', onPointerMove);
+  renderer.domElement.addEventListener('pointerleave', onPointerLeave);
+  renderer.domElement.addEventListener('click', onClick);
 
   function update(snapshot) {
     frameId += 1;
@@ -249,6 +423,7 @@ export function createWifiScene(container) {
       }
 
       node.lastSeenFrame = frameId;
+      node.ap = ap;
 
       const target = positions[ap.bssid] ?? { x: 0, y: 0, z: 0 };
       node.sprite.position.x += (target.x - node.sprite.position.x) * 0.35;
@@ -256,16 +431,28 @@ export function createWifiScene(container) {
       node.sprite.position.z += (target.z - node.sprite.position.z) * 0.35;
 
       const strength = clamp((ap.rssi + 90) / 60, 0, 1);
-      const nodeSize = 1.7 + strength * 4.3;
+      const isSelected = ap.bssid === selectedBssid;
+      const nodeSize = (1.7 + strength * 4.3) * (isSelected ? 1.32 : 1);
       node.sprite.scale.set(nodeSize, nodeSize, 1);
 
       const clusterColor = getClusterColor(ap.clusterId || 0);
-      node.material.color.copy(clusterColor);
-      node.material.opacity = ap.rssiEstimated ? 0.68 : 0.95;
+      if (isSelected) {
+        tempColor.copy(clusterColor).lerp(whiteColor, 0.28);
+        node.material.color.copy(tempColor);
+      } else {
+        node.material.color.copy(clusterColor);
+      }
+      node.material.opacity = isSelected ? 1 : ap.rssiEstimated ? 0.68 : 0.95;
     }
 
     for (const [id, node] of activePoolById.entries()) {
       if (node.lastSeenFrame !== frameId) {
+        if (id === selectedBssid) {
+          setSelectedBssid(null);
+        }
+        if (hoveredNode === node) {
+          hideTooltip();
+        }
         releaseNode(id);
       }
     }
@@ -278,7 +465,7 @@ export function createWifiScene(container) {
       }
 
       const strength = clamp((ap.rssi + 90) / 60, 0, 1);
-      const sphereRadius = 5 + strength * 20;
+      const sphereRadius = (5 + strength * 20) * (ap.bssid === selectedBssid ? 1.16 : 1);
 
       tempPosition.copy(node.sprite.position);
       tempScale.setScalar(sphereRadius);
@@ -375,6 +562,9 @@ export function createWifiScene(container) {
     dispose() {
       cancelAnimationFrame(animationFrameId);
       window.removeEventListener('resize', onResize);
+      renderer.domElement.removeEventListener('pointermove', onPointerMove);
+      renderer.domElement.removeEventListener('pointerleave', onPointerLeave);
+      renderer.domElement.removeEventListener('click', onClick);
 
       for (const node of spritePool) {
         scene.remove(node.sprite);
@@ -393,6 +583,7 @@ export function createWifiScene(container) {
       controls.dispose();
       composer.dispose();
       renderer.dispose();
+      tooltipEl.remove();
     },
   };
 }

@@ -1,3 +1,8 @@
+import {
+  estimateDistanceMetersFromRssi,
+  formatDistanceMeters,
+} from './distance.js';
+
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
@@ -103,6 +108,8 @@ export function createHud(container, handlers = {}) {
   let recordingEnabled = false;
   let replayEnabled = false;
   let collapsed = false;
+  let selectedBssid = null;
+  let lastSnapshot = null;
 
   function setConnection(status) {
     statusEl.textContent = status;
@@ -127,6 +134,13 @@ export function createHud(container, handlers = {}) {
 
   function handleCollapseToggle() {
     setCollapsed(!collapsed);
+  }
+
+  function setSelectedBssid(bssid) {
+    selectedBssid = bssid || null;
+    if (lastSnapshot) {
+      update(lastSnapshot);
+    }
   }
 
   function setConfig(config) {
@@ -222,8 +236,19 @@ export function createHud(container, handlers = {}) {
   collapseToggleBtn.addEventListener('click', handleCollapseToggle);
 
   function update(snapshot) {
+    lastSnapshot = snapshot;
     const aps = [...(snapshot.aps ?? [])].sort((a, b) => b.rssi - a.rssi);
     const visible = aps.slice(0, 22);
+
+    if (selectedBssid && !visible.some((ap) => ap.bssid === selectedBssid)) {
+      const selectedAp = aps.find((ap) => ap.bssid === selectedBssid);
+      if (selectedAp) {
+        if (visible.length >= 22) {
+          visible.pop();
+        }
+        visible.push(selectedAp);
+      }
+    }
 
     countsEl.textContent = `${aps.length} APs tracked • mode ${snapshot.meta?.mode || 'live'}`;
 
@@ -251,6 +276,10 @@ export function createHud(container, handlers = {}) {
     for (const ap of visible) {
       const row = document.createElement('li');
       row.className = 'network-row';
+      row.dataset.bssid = ap.bssid;
+      if (selectedBssid && ap.bssid === selectedBssid) {
+        row.classList.add('is-selected');
+      }
       row.style.setProperty('--cluster-color', clusterColor(ap.clusterId));
 
       const left = document.createElement('div');
@@ -273,7 +302,11 @@ export function createHud(container, handlers = {}) {
 
       const rssi = document.createElement('p');
       rssi.className = 'network-rssi';
-      rssi.textContent = ap.rssiEstimated ? `~${ap.rssi} dBm` : `${ap.rssi} dBm`;
+      const estimatedDistance = estimateDistanceMetersFromRssi(ap.rssi);
+      const distanceLabel = formatDistanceMeters(estimatedDistance);
+      rssi.textContent = ap.rssiEstimated
+        ? `~${ap.rssi} dBm • ${distanceLabel}`
+        : `${ap.rssi} dBm • ${distanceLabel}`;
 
       const bars = document.createElement('div');
       bars.className = 'signal-bars';
@@ -301,6 +334,7 @@ export function createHud(container, handlers = {}) {
     setConfig,
     setRecording,
     setReplay,
+    setSelectedBssid,
     setControlMessage,
     update,
   };
