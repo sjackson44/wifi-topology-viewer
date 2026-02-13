@@ -10,6 +10,7 @@ const LIST_ROOM_STORAGE_KEY = 'wifiTopologyViewer.listRoom';
 const LIST_ROOM_MIN = 30;
 const LIST_ROOM_MAX = 80;
 const LIST_ROOM_DEFAULT = 62;
+const DENSITY_BAR_WIDTH = 8;
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -35,6 +36,99 @@ function clusterColor(clusterId) {
   const offset = ((clusterId * 12) % 34) - 17;
   const hue = 140 + offset;
   return `hsl(${hue} 78% 64%)`;
+}
+
+function resolveBand(ap) {
+  const text = String(ap.band || '').toLowerCase();
+  if (text.includes('2.4')) {
+    return '2.4';
+  }
+  if (text.includes('5')) {
+    return '5';
+  }
+
+  const channel = Number.parseInt(ap.channel, 10);
+  if (!Number.isFinite(channel)) {
+    return null;
+  }
+  if (channel >= 1 && channel <= 14) {
+    return '2.4';
+  }
+  if (channel >= 32) {
+    return '5';
+  }
+
+  return null;
+}
+
+function buildChannelDensity(aps) {
+  const channel24 = new Map();
+  const channel5 = new Map();
+
+  for (const ap of aps) {
+    const channel = Number.parseInt(ap.channel, 10);
+    if (!Number.isFinite(channel) || channel <= 0) {
+      continue;
+    }
+
+    const band = resolveBand(ap);
+    if (band === '2.4') {
+      channel24.set(channel, (channel24.get(channel) || 0) + 1);
+    } else if (band === '5') {
+      channel5.set(channel, (channel5.get(channel) || 0) + 1);
+    }
+  }
+
+  const toRows = (map) =>
+    [...map.entries()]
+      .map(([channel, count]) => ({ channel, count }))
+      .sort((a, b) => a.channel - b.channel);
+
+  return {
+    band24: toRows(channel24),
+    band5: toRows(channel5),
+  };
+}
+
+function buildDensityBar(count, maxCount) {
+  const safeMax = Math.max(1, maxCount);
+  const units = clamp(Math.round((count / safeMax) * DENSITY_BAR_WIDTH), 1, DENSITY_BAR_WIDTH);
+  return `${'#'.repeat(units)}${'.'.repeat(DENSITY_BAR_WIDTH - units)}`;
+}
+
+function formatStability(value) {
+  if (!Number.isFinite(value)) {
+    return '--';
+  }
+  return value.toFixed(2);
+}
+
+function buildReportFilename(now = new Date()) {
+  const yyyy = String(now.getFullYear());
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  const hh = String(now.getHours()).padStart(2, '0');
+  const min = String(now.getMinutes()).padStart(2, '0');
+  const ss = String(now.getSeconds()).padStart(2, '0');
+  return `wifi-topology-report-${yyyy}${mm}${dd}-${hh}${min}${ss}.md`;
+}
+
+function downloadMarkdownFile(markdown, filename) {
+  const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.style.display = 'none';
+
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+
+  setTimeout(() => {
+    URL.revokeObjectURL(url);
+  }, 0);
 }
 
 export function createHud(container, handlers = {}) {
@@ -95,6 +189,7 @@ export function createHud(container, handlers = {}) {
             <label class="checkbox-label"><input data-role="replay-loop" type="checkbox" />loop</label>
           </div>
           <button data-role="replay-toggle" class="control-btn">start replay</button>
+          <button data-role="export-report" class="control-btn">export report</button>
 
           <div class="list-room-control">
             <div class="list-room-header">
@@ -112,6 +207,18 @@ export function createHud(container, handlers = {}) {
               aria-label="Adjust network list space"
             />
           </div>
+
+          <section class="channel-density" data-role="channel-density">
+            <h2>Channel density</h2>
+            <div class="channel-density-band">
+              <p class="channel-density-title">2.4GHz</p>
+              <ul data-role="channel-density-24" class="channel-density-list"></ul>
+            </div>
+            <div class="channel-density-band">
+              <p class="channel-density-title">5GHz</p>
+              <ul data-role="channel-density-5" class="channel-density-list"></ul>
+            </div>
+          </section>
 
           <p data-role="control-msg" class="control-msg">ready</p>
         </section>
@@ -148,6 +255,10 @@ export function createHud(container, handlers = {}) {
   const replaySpeedInput = container.querySelector('[data-role="replay-speed"]');
   const replayLoopInput = container.querySelector('[data-role="replay-loop"]');
   const replayToggleBtn = container.querySelector('[data-role="replay-toggle"]');
+  const exportReportBtn = container.querySelector('[data-role="export-report"]');
+
+  const channelDensity24El = container.querySelector('[data-role="channel-density-24"]');
+  const channelDensity5El = container.querySelector('[data-role="channel-density-5"]');
 
   let recordingEnabled = false;
   let replayEnabled = false;
@@ -230,6 +341,32 @@ export function createHud(container, handlers = {}) {
     }
   }
 
+  function renderChannelDensity(snapshotAps) {
+    const density = buildChannelDensity(snapshotAps);
+
+    const renderBand = (targetEl, rows) => {
+      if (!rows.length) {
+        const empty = document.createElement('li');
+        empty.className = 'channel-density-row empty';
+        empty.textContent = '(no data)';
+        targetEl.replaceChildren(empty);
+        return;
+      }
+
+      const maxCount = Math.max(...rows.map((row) => row.count), 1);
+      const items = rows.map((row) => {
+        const li = document.createElement('li');
+        li.className = 'channel-density-row';
+        li.textContent = `ch ${row.channel} ${buildDensityBar(row.count, maxCount)} (${row.count})`;
+        return li;
+      });
+      targetEl.replaceChildren(...items);
+    };
+
+    renderBand(channelDensity24El, density.band24);
+    renderBand(channelDensity5El, density.band5);
+  }
+
   function handleCollapseToggle() {
     setCollapsed(!collapsed);
   }
@@ -244,6 +381,24 @@ export function createHud(container, handlers = {}) {
 
   function handleListRoomInput() {
     setListRoomPercent(listRoomInput.value);
+  }
+
+  async function handleExportReport() {
+    exportReportBtn.disabled = true;
+
+    try {
+      const payload = await handlers.exportReport?.();
+      if (!payload?.markdown) {
+        throw new Error('report export returned no markdown');
+      }
+
+      downloadMarkdownFile(payload.markdown, payload.filename || buildReportFilename());
+      setControlMessage('report exported');
+    } catch (error) {
+      setControlMessage(error.message || 'report export failed', true);
+    } finally {
+      exportReportBtn.disabled = false;
+    }
   }
 
   function setSelectedBssid(bssid) {
@@ -343,13 +498,16 @@ export function createHud(container, handlers = {}) {
   applyConfigBtn.addEventListener('click', handleApplyConfig);
   recordToggleBtn.addEventListener('click', handleRecordToggle);
   replayToggleBtn.addEventListener('click', handleReplayToggle);
+  exportReportBtn.addEventListener('click', handleExportReport);
   collapseToggleBtn.addEventListener('click', handleCollapseToggle);
   minimalModeInput.addEventListener('change', handleMinimalModeChange);
   subtleMotionInput.addEventListener('change', handleSubtleMotionChange);
   listRoomInput.addEventListener('input', handleListRoomInput);
+
   setCollapsed(true);
   setListRoomPercent(listRoomPercent, { persist: true });
   setVisualSettings({}, { persist: true, emit: true });
+  renderChannelDensity([]);
 
   function update(snapshot) {
     lastSnapshot = snapshot;
@@ -387,6 +545,8 @@ export function createHud(container, handlers = {}) {
       replayEnabled = Boolean(snapshot.meta.replay);
       replayToggleBtn.textContent = replayEnabled ? 'stop replay' : 'start replay';
     }
+
+    renderChannelDensity(aps);
 
     const rows = [];
     for (const ap of visible) {
@@ -434,8 +594,13 @@ export function createHud(container, handlers = {}) {
         bars.appendChild(bar);
       }
 
+      const stability = document.createElement('p');
+      stability.className = 'network-stability';
+      stability.textContent = `S: ${formatStability(ap.stability)}`;
+
       right.appendChild(rssi);
       right.appendChild(bars);
+      right.appendChild(stability);
 
       row.appendChild(left);
       row.appendChild(right);

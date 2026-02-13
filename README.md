@@ -1,10 +1,10 @@
 # WiFi Topology Viewer
 
-Local-only prototype that scans nearby Wi-Fi access points, computes weighted RSSI correlations, embeds APs in a 3D spherical space, and streams snapshots to a Three.js Matrix-style visualization.
+Local-only Wi-Fi topology viewer that scans nearby access points, computes rolling signal relationships, and renders a lightweight 3D correlation space.
 
 ## What it does
 
-- Scans networks continuously (default every `1000ms`).
+- Scans nearby Wi-Fi networks continuously (default every `1000ms`).
 - Scanner priority (auto-detected by OS):
   - macOS:
     1. `airport -s`
@@ -17,21 +17,22 @@ Local-only prototype that scans nearby Wi-Fi access points, computes weighted RS
     1. `nmcli --terse --fields BSSID,SSID,SIGNAL,CHAN,SECURITY dev wifi list`
     2. `iw dev <iface> scan` fallback
     3. `iwctl station <iface> get-networks` fallback
-- Maintains rolling RSSI history and weighted quality history per AP.
+- Maintains rolling RSSI history and sample quality history per AP.
 - Computes weighted Pearson correlations and renders strongest edges.
 - Computes 3D positions with classical MDS + smoothing.
-- Computes cluster IDs from correlation graph and uses cluster coloring in scene/HUD.
+- Computes AP clusters from the correlation graph and uses cluster tinting.
+- Computes per-AP stability score (`0.00` to `1.00`) from rolling variance + sample confidence.
 - Streams snapshots over `ws://localhost:8787/ws`.
-- Supports runtime controls from the HUD:
-  - scan interval
-  - window size
-  - edge threshold
-  - minimum overlap
-  - minimal mode toggle (hide edges/grid/coverage spheres for a cleaner view)
-  - subtle motion toggle (optional, low-amplitude node drift)
-- Supports local recording and replay:
-  - record snapshots to NDJSON
-  - replay NDJSON snapshots at configurable speed/loop
+- Sidebar controls include:
+  - visual toggles (`minimal mode`, `subtle motion`)
+  - runtime tuning (`scan interval`, `window`, `edge threshold`, `min overlap`)
+  - recording/replay controls
+  - network-list room slider
+  - channel density section (`2.4GHz` + `5GHz`) with compact bars
+  - `Export report` button (downloads Markdown from current in-memory state)
+- Supports local recording/replay (NDJSON snapshots).
+- Supports headless diagnostics:
+  - `wifi-topology-viewer --analyze --duration <seconds>`
 
 ## Visual Modes Preview
 
@@ -50,7 +51,7 @@ Local-only prototype that scans nearby Wi-Fi access points, computes weighted RS
   - Windows:
     - `netsh` available (default on modern Windows)
     - optional: drop a compatible `backend/bin/windows_wlan_scan.exe` helper for higher-fidelity scans
-    - Location access enabled for terminal apps if Wi-Fi scan visibility is restricted by policy
+    - location access enabled for terminal apps if Wi-Fi scan visibility is restricted by policy
   - Linux:
     - `nmcli` (NetworkManager) recommended
     - `iw` optional fallback
@@ -69,16 +70,63 @@ Then open:
 - Frontend: `http://127.0.0.1:5173`
 - Backend health: `http://localhost:8787/health`
 
-## Stop/kill commands
+## Headless Analyze CLI
 
-- Normal stop: `Ctrl + C` from `npm run dev`
-- Force-kill mapper processes on app ports:
+The package exposes a CLI entrypoint:
 
 ```bash
-npm run kill
+npx wifi-topology-viewer --analyze --duration 30
 ```
 
-(`npm run stop` is an alias to `npm run kill`.)
+Options:
+
+- `--duration <seconds>`: analyze duration (default `120`)
+- `--json`: print machine-readable JSON summary to stdout
+- `--out <path>`: write report output to a file
+  - default markdown path: `./wifi-topology-report-YYYYMMDD-HHMMSS.md`
+  - default json path: `./wifi-topology-report-YYYYMMDD-HHMMSS.json`
+- `--no-server`: skip temporary HTTP server startup during analyze mode
+- `--scan-interval <ms>`: override analyze scan interval only
+
+Examples:
+
+```bash
+npx wifi-topology-viewer --analyze --duration 30 --no-server
+npx wifi-topology-viewer --analyze --duration 45 --json
+npx wifi-topology-viewer --analyze --duration 60 --out ./output/run-01.md
+```
+
+Analyze output includes:
+
+- APs observed (unique BSSID) and tracked
+- cluster count and top cluster sizes (when available)
+- channel density (`2.4GHz` / `5GHz`)
+- strongest APs
+- most volatile APs
+- low-congestion channel recommendations (heuristic)
+
+Exit behavior:
+
+- exit code `0` on success
+- non-zero on fatal errors or if no networks were observed
+
+## Report Export
+
+You can export a Markdown report in two ways:
+
+- UI: click `Export report` in the sidebar
+- API: `GET /report.md`
+
+The report includes:
+
+- timestamp, OS, scan source, mode
+- rolling-window context (or duration in analyze mode)
+- AP observed/tracked counts
+- channel density table with bars
+- top clusters summary
+- top 5 strongest APs
+- top 5 most volatile APs
+- notes about topology and distance interpretation
 
 ## Runtime HTTP API
 
@@ -91,6 +139,7 @@ npm run kill
 - `GET /replay/status`
 - `POST /replay/start`
 - `POST /replay/stop`
+- `GET /report.md`
 
 Example config update:
 
@@ -100,23 +149,35 @@ curl -X PUT http://localhost:8787/config \
   -d '{"scanIntervalMs":1200,"windowSize":40,"edgeThreshold":0.65,"minOverlap":10}'
 ```
 
-Example recording start:
+Example report download:
 
 ```bash
-curl -X POST http://localhost:8787/record/start \
-  -H 'Content-Type: application/json' \
-  -d '{"path":"recordings/my-session.ndjson"}'
+curl -L http://localhost:8787/report.md -o wifi-topology-report.md
 ```
 
-Example replay start:
+## Stability Score
 
-```bash
-curl -X POST http://localhost:8787/replay/start \
-  -H 'Content-Type: application/json' \
-  -d '{"path":"recordings/my-session.ndjson","speed":1.5,"loop":true}'
+Stability is visual/diagnostic metadata only. It does not change clustering or topology layout.
+
+Formula used per AP:
+
+```text
+varNorm = clamp(variance / VAR_REF, 0, 1)
+countBoost = clamp(sampleCount / COUNT_REF, 0, 1)
+stability = clamp((1 - varNorm) * countBoost, 0, 1)
 ```
 
-## Environment variables (backend)
+Current constants:
+
+- `VAR_REF = 100`
+- `COUNT_REF = windowSize`
+
+Interpretation:
+
+- closer to `1.00` => more stable signal over the window
+- closer to `0.00` => higher volatility and/or low sample confidence
+
+## Environment Variables (Backend)
 
 - `PORT` (default `8787`)
 - `SCAN_INTERVAL_MS` (default `1000`)
@@ -131,41 +192,42 @@ curl -X POST http://localhost:8787/replay/start \
 - `AIRPORT_PATH` (default built-in macOS airport path)
 - `RECORDINGS_DIR` (default `./recordings`)
 
-## Packet shape
+## Packet Shape
 
 `type: "snapshot"` with:
 
 - `t`: epoch ms
-- `aps`: AP list with latest RSSI/stats/cluster metadata
+- `aps`: AP list with RSSI/stats/cluster metadata (`stability` included)
 - `positions`: `{ [bssid]: { x, y, z } }`
 - `edges`: strongest weighted-correlation edges
 - `meta`: runtime config + scan source + mode metadata
 
+## Manual Test Checklist
+
+1. `npm run dev` still works; UI loads, WebSocket connects, and minimal mode default is unchanged.
+2. Sidebar shows `Channel density` and updates as snapshots arrive.
+3. Network rows show stability values in `0.00..1.00` and they look reasonable.
+4. `Export report` downloads a Markdown report from current snapshot/state.
+5. `npx wifi-topology-viewer --analyze --duration 30` prints summary and exits.
+6. `npx wifi-topology-viewer --analyze --duration 30 --json` prints machine-readable JSON.
+7. `--out` writes report files successfully.
+
 ## Troubleshooting
 
 - macOS:
-  - `airport -s` returns only deprecation warning on macOS 15+:
-    - expected; backend auto-falls back to CoreWLAN helper, then `system_profiler`.
-  - SSID/BSSID missing in CoreWLAN scans:
-    - grant Location Services to your terminal app.
-  - `scanSource=system_profiler` caveat:
-    - many APs may not include real RSSI; app estimates missing RSSI and marks rows with `~`.
+  - `airport -s` returns only deprecation warning on macOS 15+: expected; backend falls back automatically.
+  - missing SSID/BSSID in CoreWLAN scans: grant Location Services to terminal app.
+  - `scanSource=system_profiler` can include estimated RSSI entries (shown with `~`).
 - Windows:
-  - `scanSource=windows_none`:
-    - ensure Wi-Fi is enabled and `WLAN AutoConfig` service is running.
-    - if scan results are unexpectedly empty, verify system location/privacy settings for desktop apps.
+  - `scanSource=windows_none`: ensure Wi-Fi is enabled and `WLAN AutoConfig` is running.
 - Linux:
-  - `scanSource=linux_none`:
-    - install/enable NetworkManager (`nmcli`) or provide `iw`/`iwctl`.
-    - `iw` scans can require elevated privileges depending on distro policy.
+  - `scanSource=linux_none`: install/enable `nmcli`, or provide `iw`/`iwctl`.
 - General:
-  - First startup delay on macOS:
-    - native helper may compile on first run.
-  - No frontend updates:
-    - verify backend is running on `8787` and WebSocket path `/ws`.
+  - first startup on macOS can be slower due to native helper build.
+  - if frontend has no updates, verify backend is running on `8787` and `/ws`.
 
 ## Privacy
 
-- Data stays in local memory unless you explicitly start recording.
-- Recording writes local NDJSON files only.
-- No external transmission.
+- Data stays local unless recording is explicitly started.
+- Recording writes local NDJSON only.
+- No telemetry, cloud sync, or external transmission.

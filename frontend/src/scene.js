@@ -412,9 +412,10 @@ export function createWifiScene(container, handlers = {}) {
     const channel = ap.channel || '?';
     const band = ap.band || 'unknown';
     const distance = estimateDistanceMetersFromRssi(ap.rssi);
+    const stability = Number.isFinite(ap.stability) ? ap.stability.toFixed(2) : '--';
 
     tooltipTitleEl.textContent = ssid;
-    tooltipMetaEl.textContent = `${rssi} dBm • ch ${channel} • ${band} • ${formatDistanceMeters(distance)}`;
+    tooltipMetaEl.textContent = `${rssi} dBm • ch ${channel} • ${band} • stab ${stability} • ${formatDistanceMeters(distance)}`;
     tooltipPairEl.hidden = true;
 
     if (selectedBssid && ap.bssid !== selectedBssid) {

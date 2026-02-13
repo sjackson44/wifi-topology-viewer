@@ -9,6 +9,11 @@ import express from 'express';
 import { WebSocket, WebSocketServer } from 'ws';
 
 import { embedPositions } from './mds.js';
+import {
+  buildAnalysisSummary,
+  buildMarkdownReport,
+  computeStabilityScore,
+} from './insights.js';
 import { buildSnapshotPacket, positionMapToObject } from './schema.js';
 import {
   buildCorrelationMatrix,
@@ -17,6 +22,7 @@ import {
   mean,
   variance,
 } from './stats.js';
+import { buildClusters } from './topology.js';
 import { DEFAULT_AIRPORT_PATH, getLastScanSource, scanWifiNetworks } from './wifiScanner.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -153,6 +159,29 @@ app.post('/record/stop', async (_req, res, next) => {
 
 app.get('/replay/status', (_req, res) => {
   res.json(getReplayStatus());
+});
+
+app.get('/report.md', (_req, res) => {
+  if (!appState.lastSnapshot) {
+    res.status(404).json({ error: 'no snapshot available yet' });
+    return;
+  }
+
+  const snapshot = appState.lastSnapshot;
+  const summary = buildAnalysisSummary({
+    aps: snapshot.aps || [],
+    meta: snapshot.meta || {},
+    mode: snapshot.meta?.mode || appState.mode || 'live',
+    observedApCount: snapshot.meta?.activeApCount ?? snapshot.aps?.length ?? 0,
+    generatedAt: Date.now(),
+  });
+
+  const markdown = buildMarkdownReport({ summary });
+  const filename = `wifi-topology-report-${formatTimestampForFilename(summary.generatedAt)}.md`;
+
+  res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send(markdown);
 });
 
 app.post('/replay/start', async (req, res, next) => {
@@ -351,23 +380,35 @@ function buildSnapshot(now, mode = 'live') {
 
   const clusters = buildClusters(ids, edges, runtimeConfig.edgeThreshold);
 
-  const aps = activeRecords.map((record) => ({
-    bssid: record.bssid,
-    ssid: record.ssid,
-    rssi: record.latestRssi,
-    channel: record.channel,
-    band: record.band,
-    security: record.security,
-    scanSource: record.scanSource,
-    rssiEstimated: record.rssiEstimated,
-    sampleQuality: round(mean(record.sampleWeights), 2),
-    sampleCount: record.samples.length,
-    meanRssi: round(mean(record.samples), 2),
-    variance: round(variance(record.samples), 2),
-    clusterId: clusters.clusterById.get(record.bssid) || 0,
-    clusterSize: clusters.clusterSizeById.get(record.bssid) || 1,
-    lastSeen: record.lastSeen,
-  }));
+  const aps = activeRecords.map((record) => {
+    const sampleVariance = variance(record.samples);
+    const sampleCount = record.samples.length;
+
+    return {
+      bssid: record.bssid,
+      ssid: record.ssid,
+      rssi: record.latestRssi,
+      channel: record.channel,
+      band: record.band,
+      security: record.security,
+      scanSource: record.scanSource,
+      rssiEstimated: record.rssiEstimated,
+      sampleQuality: round(mean(record.sampleWeights), 2),
+      sampleCount,
+      meanRssi: round(mean(record.samples), 2),
+      variance: round(sampleVariance, 2),
+      // Stability is variance-normalized and confidence-weighted by sample count.
+      stability: computeStabilityScore({
+        varianceValue: sampleVariance,
+        sampleCount,
+        varRef: 100,
+        countRef: runtimeConfig.windowSize,
+      }),
+      clusterId: clusters.clusterById.get(record.bssid) || 0,
+      clusterSize: clusters.clusterSizeById.get(record.bssid) || 1,
+      lastSeen: record.lastSeen,
+    };
+  });
 
   return buildSnapshotPacket({
     t: now,
@@ -623,63 +664,6 @@ function computeReplayDelayMs(current, next, speed, fallbackMs) {
   return clamp(Math.round(base / Math.max(speed, 0.1)), 40, 15_000);
 }
 
-function buildClusters(ids, edges, minCorr) {
-  const graph = new Map(ids.map((id) => [id, new Set()]));
-
-  for (const edge of edges) {
-    if (edge.corr < minCorr) {
-      continue;
-    }
-    graph.get(edge.a)?.add(edge.b);
-    graph.get(edge.b)?.add(edge.a);
-  }
-
-  const visited = new Set();
-  const clusterById = new Map(ids.map((id) => [id, 0]));
-  const clusterSizeById = new Map(ids.map((id) => [id, 1]));
-  const summary = [];
-
-  let clusterId = 1;
-
-  for (const id of ids) {
-    if (visited.has(id)) {
-      continue;
-    }
-
-    const stack = [id];
-    const members = [];
-    visited.add(id);
-
-    while (stack.length) {
-      const node = stack.pop();
-      members.push(node);
-      for (const neighbor of graph.get(node) || []) {
-        if (!visited.has(neighbor)) {
-          visited.add(neighbor);
-          stack.push(neighbor);
-        }
-      }
-    }
-
-    if (members.length > 1) {
-      for (const member of members) {
-        clusterById.set(member, clusterId);
-        clusterSizeById.set(member, members.length);
-      }
-      summary.push(members.length);
-      clusterId += 1;
-    }
-  }
-
-  summary.sort((a, b) => b - a);
-
-  return {
-    clusterById,
-    clusterSizeById,
-    summary,
-  };
-}
-
 function getRuntimeConfig() {
   return {
     ...runtimeConfig,
@@ -778,6 +762,17 @@ function parseBoundedFloat(value, fallback, min, max, label = 'value') {
 function round(value, precision = 2) {
   const factor = 10 ** precision;
   return Math.round(value * factor) / factor;
+}
+
+function formatTimestampForFilename(input) {
+  const date = input instanceof Date ? input : new Date(input);
+  const yyyy = String(date.getFullYear());
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  const hh = String(date.getHours()).padStart(2, '0');
+  const min = String(date.getMinutes()).padStart(2, '0');
+  const ss = String(date.getSeconds()).padStart(2, '0');
+  return `${yyyy}${mm}${dd}-${hh}${min}${ss}`;
 }
 
 function clamp(value, min, max) {
