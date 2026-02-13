@@ -269,7 +269,8 @@ body,
   font-size: 11px !important;
 }
 
-.minimal-mode-toggle {
+.minimal-mode-toggle,
+.subtle-motion-toggle {
   margin-top: 2px;
 }
 

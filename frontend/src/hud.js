@@ -4,6 +4,7 @@ import {
 } from './distance.js';
 
 const MINIMAL_MODE_STORAGE_KEY = 'wifiTopologyViewer.minimalMode';
+const SUBTLE_MOTION_STORAGE_KEY = 'wifiTopologyViewer.subtleMotion';
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -25,8 +26,10 @@ function clusterColor(clusterId) {
   if (!clusterId || clusterId < 1) {
     return '#57ff9f';
   }
-  const hue = (clusterId * 67) % 360;
-  return `hsl(${hue} 88% 66%)`;
+
+  const offset = ((clusterId * 17) % 37) - 18;
+  const hue = 150 + offset;
+  return `hsl(${hue} 82% 64%)`;
 }
 
 export function createHud(container, handlers = {}) {
@@ -56,11 +59,16 @@ export function createHud(container, handlers = {}) {
       </section>
 
       <section class="hud-controls">
-        <h2>Runtime</h2>
+        <h2>Visual</h2>
         <label class="checkbox-label minimal-mode-toggle">
           <input data-role="minimal-mode" type="checkbox" />minimal mode
         </label>
-        <p class="control-hint">Hide edges + grid for a cleaner view</p>
+        <p class="control-hint">Hide edges + grid + coverage spheres for a cleaner view</p>
+        <label class="checkbox-label subtle-motion-toggle">
+          <input data-role="subtle-motion" type="checkbox" />subtle motion
+        </label>
+
+        <h2>Runtime</h2>
         <div class="control-grid">
           <label>scan ms<input data-role="scan-interval" type="number" min="300" max="10000" step="100" /></label>
           <label>window<input data-role="window-size" type="number" min="8" max="240" step="1" /></label>
@@ -98,6 +106,7 @@ export function createHud(container, handlers = {}) {
 
   const controlMessageEl = container.querySelector('[data-role="control-msg"]');
   const minimalModeInput = container.querySelector('[data-role="minimal-mode"]');
+  const subtleMotionInput = container.querySelector('[data-role="subtle-motion"]');
   const scanIntervalInput = container.querySelector('[data-role="scan-interval"]');
   const windowSizeInput = container.querySelector('[data-role="window-size"]');
   const edgeThresholdInput = container.querySelector('[data-role="edge-threshold"]');
@@ -115,7 +124,10 @@ export function createHud(container, handlers = {}) {
   let recordingEnabled = false;
   let replayEnabled = false;
   let collapsed = true;
-  let minimalMode = loadMinimalModePreference();
+  let visualSettings = {
+    minimalMode: loadBooleanPreference(MINIMAL_MODE_STORAGE_KEY),
+    subtleMotion: loadBooleanPreference(SUBTLE_MOTION_STORAGE_KEY),
+  };
   let selectedBssid = null;
   let lastSnapshot = null;
 
@@ -140,24 +152,37 @@ export function createHud(container, handlers = {}) {
     collapseToggleBtn.setAttribute('title', isExpanded ? 'Collapse sidebar' : 'Expand sidebar');
   }
 
+  function setVisualSettings(nextSettings = {}, { persist = true, emit = true } = {}) {
+    visualSettings = {
+      ...visualSettings,
+      ...nextSettings,
+      minimalMode: Boolean((nextSettings.minimalMode ?? visualSettings.minimalMode)),
+      subtleMotion: Boolean((nextSettings.subtleMotion ?? visualSettings.subtleMotion)),
+    };
+
+    minimalModeInput.checked = visualSettings.minimalMode;
+    subtleMotionInput.checked = visualSettings.subtleMotion;
+
+    if (persist) {
+      saveBooleanPreference(MINIMAL_MODE_STORAGE_KEY, visualSettings.minimalMode);
+      saveBooleanPreference(SUBTLE_MOTION_STORAGE_KEY, visualSettings.subtleMotion);
+    }
+
+    if (emit) {
+      handlers.onVisualSettingsChange?.({ ...visualSettings });
+    }
+  }
+
   function handleCollapseToggle() {
     setCollapsed(!collapsed);
   }
 
-  function setMinimalMode(nextMinimalMode, { persist = true, emit = true } = {}) {
-    minimalMode = Boolean(nextMinimalMode);
-    minimalModeInput.checked = minimalMode;
-
-    if (persist) {
-      saveMinimalModePreference(minimalMode);
-    }
-    if (emit) {
-      handlers.onMinimalModeChange?.(minimalMode);
-    }
+  function handleMinimalModeChange() {
+    setVisualSettings({ minimalMode: minimalModeInput.checked });
   }
 
-  function handleMinimalModeChange() {
-    setMinimalMode(minimalModeInput.checked);
+  function handleSubtleMotionChange() {
+    setVisualSettings({ subtleMotion: subtleMotionInput.checked });
   }
 
   function setSelectedBssid(bssid) {
@@ -259,8 +284,9 @@ export function createHud(container, handlers = {}) {
   replayToggleBtn.addEventListener('click', handleReplayToggle);
   collapseToggleBtn.addEventListener('click', handleCollapseToggle);
   minimalModeInput.addEventListener('change', handleMinimalModeChange);
+  subtleMotionInput.addEventListener('change', handleSubtleMotionChange);
   setCollapsed(true);
-  setMinimalMode(minimalMode, { persist: false, emit: true });
+  setVisualSettings({}, { persist: false, emit: true });
 
   function update(snapshot) {
     lastSnapshot = snapshot;
@@ -367,17 +393,17 @@ export function createHud(container, handlers = {}) {
   };
 }
 
-function loadMinimalModePreference() {
+function loadBooleanPreference(key) {
   try {
-    return localStorage.getItem(MINIMAL_MODE_STORAGE_KEY) === 'true';
+    return localStorage.getItem(key) === 'true';
   } catch {
     return false;
   }
 }
 
-function saveMinimalModePreference(minimalMode) {
+function saveBooleanPreference(key, value) {
   try {
-    localStorage.setItem(MINIMAL_MODE_STORAGE_KEY, String(Boolean(minimalMode)));
+    localStorage.setItem(key, String(Boolean(value)));
   } catch {
     // Ignore local storage errors.
   }

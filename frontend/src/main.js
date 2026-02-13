@@ -44,8 +44,8 @@ hud = createHud(hudRoot, {
   stopReplay() {
     return stopReplay();
   },
-  onMinimalModeChange(minimalMode) {
-    scene.setVisualMode({ minimalMode });
+  onVisualSettingsChange(settings) {
+    scene.applyVisualSettings(settings);
   },
 });
 
