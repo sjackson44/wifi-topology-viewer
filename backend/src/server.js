@@ -247,7 +247,17 @@ wss.on('connection', (socket) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`[server] listening on http://localhost:${PORT}`);
+  const appUrl = `http://localhost:${PORT}`;
+
+  console.log(`[server] listening on ${appUrl}`);
+
+  if (existsSync(FRONTEND_INDEX_FILE)) {
+    console.log(`[ui] open ${appUrl} in your browser`);
+  } else {
+    console.log('[ui] frontend build not found (expected at frontend/dist).');
+    console.log('[ui] run npm --prefix frontend run build or npm run dev for local UI development.');
+  }
+
   console.log(`[scan] airport path ${AIRPORT_PATH}`);
   console.log(
     `[scan] interval=${runtimeConfig.scanIntervalMs}ms window=${runtimeConfig.windowSize} maxAps=${runtimeConfig.maxAps}`,
