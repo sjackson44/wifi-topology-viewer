@@ -17,6 +17,23 @@ async function request(path, options = {}) {
   return data;
 }
 
+export async function fetchMarkdownReport() {
+  const response = await fetch(`${API_BASE}/report.md`);
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.error || `request failed (${response.status})`);
+  }
+
+  const markdown = await response.text();
+  const contentDisposition = response.headers.get('content-disposition') || '';
+  const match = contentDisposition.match(/filename="?([^";]+)"?/i);
+
+  return {
+    markdown,
+    filename: match?.[1] || null,
+  };
+}
+
 export function fetchConfig() {
   return request('/config');
 }

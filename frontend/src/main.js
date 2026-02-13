@@ -2,6 +2,7 @@ import './styles.css';
 
 import {
   fetchConfig,
+  fetchMarkdownReport,
   fetchRecordStatus,
   fetchReplayStatus,
   startRecording,
@@ -43,6 +44,9 @@ hud = createHud(hudRoot, {
   },
   stopReplay() {
     return stopReplay();
+  },
+  exportReport() {
+    return fetchMarkdownReport();
   },
   onVisualSettingsChange(settings) {
     scene.applyVisualSettings(settings);
