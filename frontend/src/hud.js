@@ -5,6 +5,11 @@ import {
 
 const MINIMAL_MODE_STORAGE_KEY = 'wifiTopologyViewer.minimalMode';
 const SUBTLE_MOTION_STORAGE_KEY = 'wifiTopologyViewer.subtleMotion';
+const LIST_ROOM_STORAGE_KEY = 'wifiTopologyViewer.listRoom';
+
+const LIST_ROOM_MIN = 30;
+const LIST_ROOM_MAX = 80;
+const LIST_ROOM_DEFAULT = 62;
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -58,47 +63,67 @@ export function createHud(container, handlers = {}) {
         <p data-role="clusters">clusters n/a</p>
       </section>
 
-      <section class="hud-controls">
-        <h2>Visual</h2>
-        <label class="checkbox-label minimal-mode-toggle">
-          <input data-role="minimal-mode" type="checkbox" />Minimal mode
-        </label>
-        <p class="control-hint">Hide edges + grid + coverage spheres</p>
-        <label class="checkbox-label subtle-motion-toggle">
-          <input data-role="subtle-motion" type="checkbox" />Subtle motion
-        </label>
-        <p class="control-hint">Add small drifting motion to nodes</p>
+      <div class="hud-body" data-role="hud-body">
+        <section class="hud-controls">
+          <h2>Visual</h2>
+          <label class="checkbox-label minimal-mode-toggle">
+            <input data-role="minimal-mode" type="checkbox" />Minimal mode
+          </label>
+          <p class="control-hint">Hide edges + grid + coverage spheres</p>
+          <label class="checkbox-label subtle-motion-toggle">
+            <input data-role="subtle-motion" type="checkbox" />Subtle motion
+          </label>
+          <p class="control-hint">Add small drifting motion to nodes</p>
 
-        <h2>Runtime</h2>
-        <div class="control-grid">
-          <label>scan ms<input data-role="scan-interval" type="number" min="300" max="10000" step="100" /></label>
-          <label>window<input data-role="window-size" type="number" min="8" max="240" step="1" /></label>
-          <label>edge threshold<input data-role="edge-threshold" type="number" min="0.05" max="0.98" step="0.01" /></label>
-          <label>min overlap<input data-role="min-overlap" type="number" min="4" max="80" step="1" /></label>
-        </div>
-        <button data-role="apply-config" class="control-btn">apply config</button>
+          <h2>Runtime</h2>
+          <div class="control-grid">
+            <label>scan ms<input data-role="scan-interval" type="number" min="300" max="10000" step="100" /></label>
+            <label>window<input data-role="window-size" type="number" min="8" max="240" step="1" /></label>
+            <label>edge threshold<input data-role="edge-threshold" type="number" min="0.05" max="0.98" step="0.01" /></label>
+            <label>min overlap<input data-role="min-overlap" type="number" min="4" max="80" step="1" /></label>
+          </div>
+          <button data-role="apply-config" class="control-btn">apply config</button>
 
-        <h2>Capture</h2>
-        <label>record path<input data-role="record-path" type="text" placeholder="recordings/session.ndjson" /></label>
-        <button data-role="record-toggle" class="control-btn">start recording</button>
+          <h2>Capture</h2>
+          <label>record path<input data-role="record-path" type="text" placeholder="recordings/session.ndjson" /></label>
+          <button data-role="record-toggle" class="control-btn">start recording</button>
 
-        <h2>Replay</h2>
-        <label>replay file<input data-role="replay-path" type="text" placeholder="recordings/session.ndjson" /></label>
-        <div class="control-grid replay-grid">
-          <label>speed<input data-role="replay-speed" type="number" min="0.2" max="8" step="0.1" value="1" /></label>
-          <label class="checkbox-label"><input data-role="replay-loop" type="checkbox" />loop</label>
-        </div>
-        <button data-role="replay-toggle" class="control-btn">start replay</button>
+          <h2>Replay</h2>
+          <label>replay file<input data-role="replay-path" type="text" placeholder="recordings/session.ndjson" /></label>
+          <div class="control-grid replay-grid">
+            <label>speed<input data-role="replay-speed" type="number" min="0.2" max="8" step="0.1" value="1" /></label>
+            <label class="checkbox-label"><input data-role="replay-loop" type="checkbox" />loop</label>
+          </div>
+          <button data-role="replay-toggle" class="control-btn">start replay</button>
 
-        <p data-role="control-msg" class="control-msg">ready</p>
-      </section>
+          <div class="list-room-control">
+            <div class="list-room-header">
+              <span>list room</span>
+              <span data-role="list-room-value">${LIST_ROOM_DEFAULT}%</span>
+            </div>
+            <input
+              data-role="list-room"
+              class="list-room-input"
+              type="range"
+              min="${LIST_ROOM_MIN}"
+              max="${LIST_ROOM_MAX}"
+              step="1"
+              value="${LIST_ROOM_DEFAULT}"
+              aria-label="Adjust network list space"
+            />
+          </div>
 
-      <ul class="network-list" data-role="network-list"></ul>
+          <p data-role="control-msg" class="control-msg">ready</p>
+        </section>
+
+        <ul class="network-list" data-role="network-list"></ul>
+      </div>
     </div>
   `;
 
   const statusEl = container.querySelector('[data-role="status"]');
   const hudEl = container.querySelector('.hud');
+  const hudBodyEl = container.querySelector('[data-role="hud-body"]');
   const collapseToggleBtn = container.querySelector('[data-role="collapse-toggle"]');
   const countsEl = container.querySelector('[data-role="counts"]');
   const scanEl = container.querySelector('[data-role="scan"]');
@@ -108,6 +133,8 @@ export function createHud(container, handlers = {}) {
   const controlMessageEl = container.querySelector('[data-role="control-msg"]');
   const minimalModeInput = container.querySelector('[data-role="minimal-mode"]');
   const subtleMotionInput = container.querySelector('[data-role="subtle-motion"]');
+  const listRoomInput = container.querySelector('[data-role="list-room"]');
+  const listRoomValueEl = container.querySelector('[data-role="list-room-value"]');
   const scanIntervalInput = container.querySelector('[data-role="scan-interval"]');
   const windowSizeInput = container.querySelector('[data-role="window-size"]');
   const edgeThresholdInput = container.querySelector('[data-role="edge-threshold"]');
@@ -129,6 +156,12 @@ export function createHud(container, handlers = {}) {
     minimalMode: loadBooleanPreference(MINIMAL_MODE_STORAGE_KEY, false),
     subtleMotion: loadBooleanPreference(SUBTLE_MOTION_STORAGE_KEY, true),
   };
+  let listRoomPercent = loadNumberPreference(
+    LIST_ROOM_STORAGE_KEY,
+    LIST_ROOM_DEFAULT,
+    LIST_ROOM_MIN,
+    LIST_ROOM_MAX,
+  );
   let selectedBssid = null;
   let lastSnapshot = null;
 
@@ -174,6 +207,29 @@ export function createHud(container, handlers = {}) {
     }
   }
 
+  function setListRoomPercent(nextValue, { persist = true } = {}) {
+    const numeric = Number.parseInt(nextValue, 10);
+    const clampedPercent = clamp(
+      Number.isFinite(numeric) ? numeric : LIST_ROOM_DEFAULT,
+      LIST_ROOM_MIN,
+      LIST_ROOM_MAX,
+    );
+
+    listRoomPercent = clampedPercent;
+    listRoomInput.value = String(clampedPercent);
+    listRoomValueEl.textContent = `${clampedPercent}%`;
+
+    const listFlex = clampedPercent;
+    const controlsFlex = 100 - clampedPercent;
+
+    hudBodyEl.style.setProperty('--list-flex', String(listFlex));
+    hudBodyEl.style.setProperty('--controls-flex', String(controlsFlex));
+
+    if (persist) {
+      saveNumberPreference(LIST_ROOM_STORAGE_KEY, clampedPercent);
+    }
+  }
+
   function handleCollapseToggle() {
     setCollapsed(!collapsed);
   }
@@ -184,6 +240,10 @@ export function createHud(container, handlers = {}) {
 
   function handleSubtleMotionChange() {
     setVisualSettings({ subtleMotion: subtleMotionInput.checked });
+  }
+
+  function handleListRoomInput() {
+    setListRoomPercent(listRoomInput.value);
   }
 
   function setSelectedBssid(bssid) {
@@ -286,7 +346,9 @@ export function createHud(container, handlers = {}) {
   collapseToggleBtn.addEventListener('click', handleCollapseToggle);
   minimalModeInput.addEventListener('change', handleMinimalModeChange);
   subtleMotionInput.addEventListener('change', handleSubtleMotionChange);
+  listRoomInput.addEventListener('input', handleListRoomInput);
   setCollapsed(true);
+  setListRoomPercent(listRoomPercent, { persist: true });
   setVisualSettings({}, { persist: true, emit: true });
 
   function update(snapshot) {
@@ -409,6 +471,31 @@ function loadBooleanPreference(key, defaultValue = false) {
 function saveBooleanPreference(key, value) {
   try {
     localStorage.setItem(key, String(Boolean(value)));
+  } catch {
+    // Ignore local storage errors.
+  }
+}
+
+function loadNumberPreference(key, defaultValue, min, max) {
+  try {
+    const value = localStorage.getItem(key);
+    if (value == null) {
+      return defaultValue;
+    }
+
+    const parsed = Number.parseInt(value, 10);
+    if (!Number.isFinite(parsed)) {
+      return defaultValue;
+    }
+    return clamp(parsed, min, max);
+  } catch {
+    return defaultValue;
+  }
+}
+
+function saveNumberPreference(key, value) {
+  try {
+    localStorage.setItem(key, String(value));
   } catch {
     // Ignore local storage errors.
   }
