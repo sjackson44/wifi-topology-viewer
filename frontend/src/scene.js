@@ -161,15 +161,15 @@ export function createWifiScene(container, handlers = {}) {
     600,
   );
   camera.position.set(0, 18, 130);
-  const defaultCameraPosition = camera.position.clone();
-  const minimalCameraPosition = defaultCameraPosition.clone().multiplyScalar(MINIMAL_CAMERA_DISTANCE_FACTOR);
-  const cameraTargetPosition = defaultCameraPosition.clone();
 
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
   controls.minDistance = 45;
   controls.maxDistance = 240;
+
+  const defaultCameraOffset = camera.position.clone().sub(controls.target);
+  const defaultCameraDistance = Math.max(1, defaultCameraOffset.length());
 
   scene.add(new THREE.AmbientLight(0x4eff97, 0.35));
   const keyLight = new THREE.PointLight(0x52ff9f, 1.5, 460);
@@ -351,7 +351,20 @@ export function createWifiScene(container, handlers = {}) {
     }
   }
 
+  function setCameraDistance(distance) {
+    const clampedDistance = clamp(distance, controls.minDistance, controls.maxDistance);
+    const offset = camera.position.clone().sub(controls.target);
+    if (offset.lengthSq() < 1e-6) {
+      offset.copy(defaultCameraOffset);
+    }
+    offset.setLength(clampedDistance);
+    camera.position.copy(controls.target).add(offset);
+    controls.update();
+  }
+
   function applyVisualSettings(nextSettings = {}) {
+    const previousMinimalMode = visualSettings.minimalMode;
+
     if (nextSettings.minimalMode !== undefined) {
       visualSettings.minimalMode = Boolean(nextSettings.minimalMode);
     }
@@ -363,15 +376,15 @@ export function createWifiScene(container, handlers = {}) {
     edgeLines.visible = showDecor;
     coverageMesh.visible = showDecor;
     backgroundGridGroup.visible = showDecor;
-
     edgeMaterial.opacity = showDecor ? BASE_EDGE_OPACITY : 0;
 
-    if (visualSettings.minimalMode) {
-      cameraTargetPosition.copy(minimalCameraPosition);
-      controls.rotateSpeed = 0.78;
-    } else {
-      cameraTargetPosition.copy(defaultCameraPosition);
-      controls.rotateSpeed = 1;
+    controls.rotateSpeed = visualSettings.minimalMode ? 0.78 : 1;
+
+    if (visualSettings.minimalMode !== previousMinimalMode) {
+      const desiredDistance = visualSettings.minimalMode
+        ? defaultCameraDistance * MINIMAL_CAMERA_DISTANCE_FACTOR
+        : defaultCameraDistance;
+      setCameraDistance(desiredDistance);
     }
 
     if (!showDecor) {
@@ -651,7 +664,6 @@ export function createWifiScene(container, handlers = {}) {
     keyLight.position.z = Math.cos(t * 0.28) * 56;
 
     controls.target.y = Math.sin(t * 0.45) * 2;
-    camera.position.lerp(cameraTargetPosition, 0.08);
     controls.update();
 
     if (!visualSettings.minimalMode) {
