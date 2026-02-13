@@ -1,4 +1,4 @@
-import { createWriteStream } from 'node:fs';
+import { createWriteStream, existsSync } from 'node:fs';
 import { mkdir, readFile } from 'node:fs/promises';
 import http from 'node:http';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
@@ -32,6 +32,8 @@ const projectRoot = resolve(__dirname, '..', '..');
 const PORT = parsePositiveInt(process.env.PORT, 8787);
 const AIRPORT_PATH = process.env.AIRPORT_PATH || DEFAULT_AIRPORT_PATH;
 const RECORDINGS_DIR = process.env.RECORDINGS_DIR || join(projectRoot, 'recordings');
+const FRONTEND_DIST_DIR = join(projectRoot, 'frontend', 'dist');
+const FRONTEND_INDEX_FILE = join(FRONTEND_DIST_DIR, 'index.html');
 const HIDDEN_SSID = '<hidden>';
 
 const runtimeConfig = {
@@ -215,6 +217,19 @@ app.post('/replay/stop', async (_req, res, next) => {
     next(error);
   }
 });
+
+if (existsSync(FRONTEND_INDEX_FILE)) {
+  app.use(express.static(FRONTEND_DIST_DIR));
+
+  app.get('*', (req, res, next) => {
+    if (req.method !== 'GET') {
+      next();
+      return;
+    }
+
+    res.sendFile(FRONTEND_INDEX_FILE);
+  });
+}
 
 app.use((error, _req, res, _next) => {
   const message = error?.message || 'internal error';

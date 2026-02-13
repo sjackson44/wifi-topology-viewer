@@ -89,6 +89,20 @@ Then open:
 - Frontend: `http://127.0.0.1:5173`
 - Backend health: `http://localhost:8787/health`
 
+## Global CLI Install
+
+Install from npm and run:
+
+```bash
+npm i -g wifi-topology-viewer
+wifi-topology-viewer
+```
+
+Then open:
+
+- App UI: `http://localhost:8787`
+- Health: `http://localhost:8787/health`
+
 ## Headless Analyze CLI
 
 The package exposes a CLI entrypoint:
