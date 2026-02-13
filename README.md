@@ -35,11 +35,11 @@ Local-only prototype that scans nearby Wi-Fi access points, computes weighted RS
 
 ## Visual Modes Preview
 
-![Default collapsed view](docs/screenshots/01-default-collapsed.png)
+![Default collapsed view](docs/screenshots/01.png)
 
-![Full visual mode](docs/screenshots/02-full-visual.png)
+![Full visual mode](docs/screenshots/02.png)
 
-![Minimal mode](docs/screenshots/03-minimal-mode.png)
+![Minimal mode](docs/screenshots/03.png)
 
 ## Requirements
 
