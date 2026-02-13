@@ -1,0 +1,17 @@
+{
+  "name": "wifi-space-mapper-backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "ml-matrix": "^6.12.0",
+    "ws": "^8.18.0"
+  }
+}

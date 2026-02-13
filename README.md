@@ -1,0 +1,134 @@
+# WiFi Space Mapper (macOS)
+
+Local-only prototype that scans nearby Wi-Fi access points on macOS, computes weighted RSSI correlations, embeds APs in a 3D spherical space, and streams snapshots to a Three.js Matrix-style visualization.
+
+## What it does
+
+- Scans networks continuously (default every `1000ms`).
+- Scanner priority:
+  1. `airport -s`
+  2. native CoreWLAN helper CLI (auto-built from `backend/native/wifi_scan.m`)
+  3. `system_profiler SPAirPortDataType -json` fallback
+- Maintains rolling RSSI history and weighted quality history per AP.
+- Computes weighted Pearson correlations and renders strongest edges.
+- Computes 3D positions with classical MDS + smoothing.
+- Computes cluster IDs from correlation graph and uses cluster coloring in scene/HUD.
+- Streams snapshots over `ws://localhost:8787/ws`.
+- Supports runtime controls from the HUD:
+  - scan interval
+  - window size
+  - edge threshold
+  - minimum overlap
+- Supports local recording and replay:
+  - record snapshots to NDJSON
+  - replay NDJSON snapshots at configurable speed/loop
+
+## Requirements
+
+- macOS
+- Node.js 18+
+- Command Line Tools (for building native CoreWLAN helper via `clang`)
+
+## Run
+
+```bash
+cd wifi-space-mapper
+npm install
+npm run dev
+```
+
+Then open:
+
+- Frontend: `http://127.0.0.1:5173`
+- Backend health: `http://localhost:8787/health`
+
+## Stop/kill commands
+
+- Normal stop: `Ctrl + C` from `npm run dev`
+- Force-kill mapper processes on app ports:
+
+```bash
+npm run kill
+```
+
+(`npm run stop` is an alias to `npm run kill`.)
+
+## Runtime HTTP API
+
+- `GET /health`
+- `GET /config`
+- `PUT /config`
+- `GET /record/status`
+- `POST /record/start`
+- `POST /record/stop`
+- `GET /replay/status`
+- `POST /replay/start`
+- `POST /replay/stop`
+
+Example config update:
+
+```bash
+curl -X PUT http://localhost:8787/config \
+  -H 'Content-Type: application/json' \
+  -d '{"scanIntervalMs":1200,"windowSize":40,"edgeThreshold":0.65,"minOverlap":10}'
+```
+
+Example recording start:
+
+```bash
+curl -X POST http://localhost:8787/record/start \
+  -H 'Content-Type: application/json' \
+  -d '{"path":"recordings/my-session.ndjson"}'
+```
+
+Example replay start:
+
+```bash
+curl -X POST http://localhost:8787/replay/start \
+  -H 'Content-Type: application/json' \
+  -d '{"path":"recordings/my-session.ndjson","speed":1.5,"loop":true}'
+```
+
+## Environment variables (backend)
+
+- `PORT` (default `8787`)
+- `SCAN_INTERVAL_MS` (default `1000`)
+- `WINDOW_SIZE` (default `30`)
+- `EVICT_AFTER_MS` (default `30000`)
+- `MAX_APS` (default `40`)
+- `SNAPSHOT_EVERY_TICKS` (default `1`)
+- `SCAN_TIMEOUT_MS` (default `5000`)
+- `MIN_OVERLAP` (default `8`)
+- `EDGE_THRESHOLD` (default `0.6`)
+- `MAX_EDGES` (default `120`)
+- `AIRPORT_PATH` (default built-in macOS airport path)
+- `RECORDINGS_DIR` (default `./recordings`)
+
+## Packet shape
+
+`type: "snapshot"` with:
+
+- `t`: epoch ms
+- `aps`: AP list with latest RSSI/stats/cluster metadata
+- `positions`: `{ [bssid]: { x, y, z } }`
+- `edges`: strongest weighted-correlation edges
+- `meta`: runtime config + scan source + mode metadata
+
+## Troubleshooting
+
+- `airport -s` returns only deprecation warning on macOS 15+:
+  - expected; backend auto-falls back to CoreWLAN helper, then `system_profiler`.
+- SSID/BSSID missing in CoreWLAN scans:
+  - grant Location Services to your terminal app.
+- Fallback mode caveat (`scanSource=system_profiler`):
+  - many APs may not include real RSSI; app estimates missing RSSI and marks rows with `~`.
+- First startup delay:
+  - native helper may compile on first run.
+- No frontend updates:
+  - verify backend is running on `8787` and WebSocket path `/ws`.
+
+## Privacy
+
+- Data stays in local memory unless you explicitly start recording.
+- Recording writes local NDJSON files only.
+- No external transmission.

@@ -1,0 +1,19 @@
+{
+  "name": "wifi-space-mapper",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -n backend,frontend -c green,cyan \"npm run dev --workspace backend\" \"npm run dev --workspace frontend\"",
+    "kill": "node scripts/kill.mjs",
+    "stop": "npm run kill",
+    "start": "npm run start --workspace backend",
+    "build": "npm run build --workspace frontend"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}
