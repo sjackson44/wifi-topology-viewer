@@ -107,7 +107,7 @@ export function createHud(container, handlers = {}) {
 
   let recordingEnabled = false;
   let replayEnabled = false;
-  let collapsed = false;
+  let collapsed = true;
   let selectedBssid = null;
   let lastSnapshot = null;
 
@@ -234,6 +234,7 @@ export function createHud(container, handlers = {}) {
   recordToggleBtn.addEventListener('click', handleRecordToggle);
   replayToggleBtn.addEventListener('click', handleReplayToggle);
   collapseToggleBtn.addEventListener('click', handleCollapseToggle);
+  setCollapsed(true);
 
   function update(snapshot) {
     lastSnapshot = snapshot;
