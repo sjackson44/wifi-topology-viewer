@@ -166,8 +166,10 @@ export function createWifiScene(container, handlers = {}) {
     }),
   );
 
-  scene.add(worldSphere);
-  scene.add(innerSphere);
+  const backgroundGridGroup = new THREE.Group();
+  backgroundGridGroup.add(worldSphere);
+  backgroundGridGroup.add(innerSphere);
+  scene.add(backgroundGridGroup);
 
   const edgePositions = new Float32Array(MAX_RENDER_EDGES * 2 * 3);
   const edgeColors = new Float32Array(MAX_RENDER_EDGES * 2 * 3);
@@ -236,6 +238,7 @@ export function createWifiScene(container, handlers = {}) {
 
   let hoveredNode = null;
   let selectedBssid = null;
+  let minimalMode = false;
 
   let frameId = 0;
 
@@ -282,6 +285,21 @@ export function createWifiScene(container, handlers = {}) {
     selectedBssid = normalized;
     if (emit) {
       handlers.onSelect?.(selectedBssid);
+    }
+  }
+
+  function applyVisualMode({ minimalMode: nextMinimalMode = false } = {}) {
+    minimalMode = Boolean(nextMinimalMode);
+    edgeLines.visible = !minimalMode;
+    coverageMesh.visible = !minimalMode;
+    backgroundGridGroup.visible = !minimalMode;
+
+    if (minimalMode) {
+      edgeGeometry.setDrawRange(0, 0);
+      edgePositionAttr.needsUpdate = true;
+      edgeColorAttr.needsUpdate = true;
+      coverageMesh.count = 0;
+      coverageMesh.instanceMatrix.needsUpdate = true;
     }
   }
 
@@ -405,6 +423,7 @@ export function createWifiScene(container, handlers = {}) {
   renderer.domElement.addEventListener('pointermove', onPointerMove);
   renderer.domElement.addEventListener('pointerleave', onPointerLeave);
   renderer.domElement.addEventListener('click', onClick);
+  applyVisualMode({ minimalMode: false });
 
   function update(snapshot) {
     frameId += 1;
@@ -457,72 +476,83 @@ export function createWifiScene(container, handlers = {}) {
       }
     }
 
-    let coverageIndex = 0;
-    for (const ap of aps) {
-      const node = activePoolById.get(ap.bssid);
-      if (!node || coverageIndex >= MAX_RENDER_NODES) {
-        continue;
+    if (minimalMode) {
+      coverageMesh.count = 0;
+      coverageMesh.instanceMatrix.needsUpdate = true;
+    } else {
+      let coverageIndex = 0;
+      for (const ap of aps) {
+        const node = activePoolById.get(ap.bssid);
+        if (!node || coverageIndex >= MAX_RENDER_NODES) {
+          continue;
+        }
+
+        const strength = clamp((ap.rssi + 90) / 60, 0, 1);
+        const sphereRadius = (5 + strength * 20) * (ap.bssid === selectedBssid ? 1.16 : 1);
+
+        tempPosition.copy(node.sprite.position);
+        tempScale.setScalar(sphereRadius);
+        tempMatrix.compose(tempPosition, identityQuaternion, tempScale);
+
+        coverageMesh.setMatrixAt(coverageIndex, tempMatrix);
+        coverageMesh.setColorAt(coverageIndex, getClusterColor(ap.clusterId || 0));
+        coverageIndex += 1;
       }
 
-      const strength = clamp((ap.rssi + 90) / 60, 0, 1);
-      const sphereRadius = (5 + strength * 20) * (ap.bssid === selectedBssid ? 1.16 : 1);
-
-      tempPosition.copy(node.sprite.position);
-      tempScale.setScalar(sphereRadius);
-      tempMatrix.compose(tempPosition, identityQuaternion, tempScale);
-
-      coverageMesh.setMatrixAt(coverageIndex, tempMatrix);
-      coverageMesh.setColorAt(coverageIndex, getClusterColor(ap.clusterId || 0));
-      coverageIndex += 1;
+      coverageMesh.count = coverageIndex;
+      coverageMesh.instanceMatrix.needsUpdate = true;
+      if (coverageMesh.instanceColor) {
+        coverageMesh.instanceColor.needsUpdate = true;
+      }
     }
 
-    coverageMesh.count = coverageIndex;
-    coverageMesh.instanceMatrix.needsUpdate = true;
-    if (coverageMesh.instanceColor) {
-      coverageMesh.instanceColor.needsUpdate = true;
+    if (minimalMode) {
+      edgeGeometry.setDrawRange(0, 0);
+      edgePositionAttr.needsUpdate = true;
+      edgeColorAttr.needsUpdate = true;
+    } else {
+      let edgeCount = 0;
+      for (const edge of snapshot.edges ?? []) {
+        if (edgeCount >= MAX_RENDER_EDGES) {
+          break;
+        }
+        if (edge.corr < edgeThreshold) {
+          continue;
+        }
+
+        const a = positions[edge.a];
+        const b = positions[edge.b];
+        if (!a || !b) {
+          continue;
+        }
+
+        const base = edgeCount * 6;
+        edgePositions[base] = a.x;
+        edgePositions[base + 1] = a.y;
+        edgePositions[base + 2] = a.z;
+        edgePositions[base + 3] = b.x;
+        edgePositions[base + 4] = b.y;
+        edgePositions[base + 5] = b.z;
+
+        const corrIntensity = clamp((edge.corr - edgeThreshold) / (1 - edgeThreshold), 0, 1);
+        const colorA = getClusterColor(clusterById.get(edge.a) || 0);
+        const colorB = getClusterColor(clusterById.get(edge.b) || 0);
+        tempColor.copy(colorA).lerp(colorB, 0.5).multiplyScalar(0.45 + corrIntensity * 0.85);
+
+        edgeColors[base] = tempColor.r;
+        edgeColors[base + 1] = tempColor.g;
+        edgeColors[base + 2] = tempColor.b;
+        edgeColors[base + 3] = tempColor.r;
+        edgeColors[base + 4] = tempColor.g;
+        edgeColors[base + 5] = tempColor.b;
+
+        edgeCount += 1;
+      }
+
+      edgeGeometry.setDrawRange(0, edgeCount * 2);
+      edgePositionAttr.needsUpdate = true;
+      edgeColorAttr.needsUpdate = true;
     }
-
-    let edgeCount = 0;
-    for (const edge of snapshot.edges ?? []) {
-      if (edgeCount >= MAX_RENDER_EDGES) {
-        break;
-      }
-      if (edge.corr < edgeThreshold) {
-        continue;
-      }
-
-      const a = positions[edge.a];
-      const b = positions[edge.b];
-      if (!a || !b) {
-        continue;
-      }
-
-      const base = edgeCount * 6;
-      edgePositions[base] = a.x;
-      edgePositions[base + 1] = a.y;
-      edgePositions[base + 2] = a.z;
-      edgePositions[base + 3] = b.x;
-      edgePositions[base + 4] = b.y;
-      edgePositions[base + 5] = b.z;
-
-      const corrIntensity = clamp((edge.corr - edgeThreshold) / (1 - edgeThreshold), 0, 1);
-      const colorA = getClusterColor(clusterById.get(edge.a) || 0);
-      const colorB = getClusterColor(clusterById.get(edge.b) || 0);
-      tempColor.copy(colorA).lerp(colorB, 0.5).multiplyScalar(0.45 + corrIntensity * 0.85);
-
-      edgeColors[base] = tempColor.r;
-      edgeColors[base + 1] = tempColor.g;
-      edgeColors[base + 2] = tempColor.b;
-      edgeColors[base + 3] = tempColor.r;
-      edgeColors[base + 4] = tempColor.g;
-      edgeColors[base + 5] = tempColor.b;
-
-      edgeCount += 1;
-    }
-
-    edgeGeometry.setDrawRange(0, edgeCount * 2);
-    edgePositionAttr.needsUpdate = true;
-    edgeColorAttr.needsUpdate = true;
   }
 
   const clock = new THREE.Clock();
@@ -559,6 +589,7 @@ export function createWifiScene(container, handlers = {}) {
 
   return {
     update,
+    setVisualMode: applyVisualMode,
     dispose() {
       cancelAnimationFrame(animationFrameId);
       window.removeEventListener('resize', onResize);

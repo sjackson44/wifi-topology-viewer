@@ -269,6 +269,16 @@ body,
   font-size: 11px !important;
 }
 
+.minimal-mode-toggle {
+  margin-top: 2px;
+}
+
+.control-hint {
+  margin: -2px 0 2px;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
 .hud-controls input[type='text'],
 .hud-controls input[type='number'] {
   background: rgba(11, 33, 21, 0.78);

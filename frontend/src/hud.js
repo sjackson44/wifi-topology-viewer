@@ -3,6 +3,8 @@ import {
   formatDistanceMeters,
 } from './distance.js';
 
+const MINIMAL_MODE_STORAGE_KEY = 'wifiTopologyViewer.minimalMode';
+
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
@@ -55,6 +57,10 @@ export function createHud(container, handlers = {}) {
 
       <section class="hud-controls">
         <h2>Runtime</h2>
+        <label class="checkbox-label minimal-mode-toggle">
+          <input data-role="minimal-mode" type="checkbox" />minimal mode
+        </label>
+        <p class="control-hint">Hide edges + grid for a cleaner view</p>
         <div class="control-grid">
           <label>scan ms<input data-role="scan-interval" type="number" min="300" max="10000" step="100" /></label>
           <label>window<input data-role="window-size" type="number" min="8" max="240" step="1" /></label>
@@ -91,6 +97,7 @@ export function createHud(container, handlers = {}) {
   const networkListEl = container.querySelector('[data-role="network-list"]');
 
   const controlMessageEl = container.querySelector('[data-role="control-msg"]');
+  const minimalModeInput = container.querySelector('[data-role="minimal-mode"]');
   const scanIntervalInput = container.querySelector('[data-role="scan-interval"]');
   const windowSizeInput = container.querySelector('[data-role="window-size"]');
   const edgeThresholdInput = container.querySelector('[data-role="edge-threshold"]');
@@ -108,6 +115,7 @@ export function createHud(container, handlers = {}) {
   let recordingEnabled = false;
   let replayEnabled = false;
   let collapsed = true;
+  let minimalMode = loadMinimalModePreference();
   let selectedBssid = null;
   let lastSnapshot = null;
 
@@ -134,6 +142,22 @@ export function createHud(container, handlers = {}) {
 
   function handleCollapseToggle() {
     setCollapsed(!collapsed);
+  }
+
+  function setMinimalMode(nextMinimalMode, { persist = true, emit = true } = {}) {
+    minimalMode = Boolean(nextMinimalMode);
+    minimalModeInput.checked = minimalMode;
+
+    if (persist) {
+      saveMinimalModePreference(minimalMode);
+    }
+    if (emit) {
+      handlers.onMinimalModeChange?.(minimalMode);
+    }
+  }
+
+  function handleMinimalModeChange() {
+    setMinimalMode(minimalModeInput.checked);
   }
 
   function setSelectedBssid(bssid) {
@@ -234,7 +258,9 @@ export function createHud(container, handlers = {}) {
   recordToggleBtn.addEventListener('click', handleRecordToggle);
   replayToggleBtn.addEventListener('click', handleReplayToggle);
   collapseToggleBtn.addEventListener('click', handleCollapseToggle);
+  minimalModeInput.addEventListener('change', handleMinimalModeChange);
   setCollapsed(true);
+  setMinimalMode(minimalMode, { persist: false, emit: true });
 
   function update(snapshot) {
     lastSnapshot = snapshot;
@@ -339,4 +365,20 @@ export function createHud(container, handlers = {}) {
     setControlMessage,
     update,
   };
+}
+
+function loadMinimalModePreference() {
+  try {
+    return localStorage.getItem(MINIMAL_MODE_STORAGE_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+function saveMinimalModePreference(minimalMode) {
+  try {
+    localStorage.setItem(MINIMAL_MODE_STORAGE_KEY, String(Boolean(minimalMode)));
+  } catch {
+    // Ignore local storage errors.
+  }
 }
